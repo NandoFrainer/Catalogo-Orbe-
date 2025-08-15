@@ -1,17 +1,19 @@
-# Orbe — Lista de Preços (GitHub Pages + Sync) — com botão Sair
+# Orbe — Lista de Preços (Pages Ready com Logo e Login Corrigido)
 
-Inclui:
-- Master/Representante, imagens, preços, sincronização GitHub e **botão “Sair”** (limpa a sessão e volta ao login).
-- Personalização de logo e plano de fundo.
+Versão compatível com **Chrome, Safari, Firefox e Edge** em PC e celular.
 
-## Publicação
-Siga os mesmos passos do pacote anterior (GitHub Pages → Deploy from a branch).
+## Publicar no GitHub Pages
+1. Crie um repositório no GitHub (ex.: `orbe-lista`).
+2. Faça upload de todos os arquivos deste pacote na **raiz** do repositório.
+3. Vá em **Settings → Pages**:
+   - **Source**: *Deploy from a branch*
+   - **Branch**: `main` e pasta `/ (root)`
+4. Aguarde a URL ser gerada (ex.: `https://SEU_USUARIO.github.io/orbe-lista/`).
 
-## Senhas padrão
+## Senhas
 - Master: `orbe-master`
 - Representante: `orbe-rep`
 
-## Botão Sair
-No topo, **Sair** encerra a sessão (remove `orbe_role` e `orbe_auth`) e recarrega a página para voltar à tela de login.
-
-Demais instruções: veja `README.md` do pacote anterior.
+## Observações
+- O campo de senha está configurado para evitar espaços e letras maiúsculas automáticas.
+- Caso abra localmente no Chrome, algumas funções podem não funcionar; use o GitHub Pages para total compatibilidade.
