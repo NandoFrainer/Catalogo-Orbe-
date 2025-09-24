@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Consulta de Produtos</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<style>
+  :root { --brand:#0a66ff; --bg:#f5f7fb; --card:#ffffff; --line:#e9edf3; }
+  html,body { height:100%; margin:0; font-family:system-ui, Arial, sans-serif; background:var(--bg); }
+  .app { display:flex; flex-direction:column; height:100vh; }
+  .topbar {
+    background:var(--card); border-bottom:1px solid var(--line);
+    padding:10px 16px; display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center;
+    position:sticky; top:0; z-index:2;
+  }
+  .file { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  input[type="file"] { padding:6px; background:#fff; border:1px solid var(--line); border-radius:8px; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; justify-self:end; }
+  select, input[type="text"], button {
+    padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:14px; background:#fff;
+  }
+  button.primary { background:var(--brand); color:#fff; border-color:var(--brand); cursor:pointer; }
+  .status { font-size:12px; color:#586271; padding:6px 2px 10px; grid-column: 1 / -1; }
+  .logo-wrap {
+    background:var(--card); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; padding:10px 12px;
+  }
+  .logo-wrap img { max-height:64px; object-fit:contain; }
+  .familias {
+    background:var(--card); border-bottom:1px solid var(--line);
+    padding:8px 12px; display:flex; gap:8px; overflow-x:auto; scrollbar-width:thin;
+  }
+  .chip {
+    white-space:nowrap; padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:#fff; cursor:pointer; font-size:13px;
+  }
+  .chip.active { background:rgba(10,102,255,.12); border-color:var(--brand); }
+  .content { flex:1; overflow:auto; padding:12px; }
+  table { width:100%; border-collapse:collapse; background:#fff; }
+  th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; font-size:14px; }
+  th { position:sticky; top:0; background:#f8fafc; z-index:1; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- TOPO -->
+  <div class="topbar">
+    <div class="file">
+      <strong>Planilha:</strong>
+      <input type="file" id="upload" accept=".xlsx,.xls" />
+      <strong>Logo:</strong>
+      <input type="file" id="uploadLogo" accept=".png,.jpg,.jpeg,.svg,.webp" />
+    </div>
+    <div class="controls">
+      <select id="modo">
+        <option value="nome">Nome</option>
+        <option value="prefixo">Família (prefixo)</option>
+        <option value="codigo">Código (exato)</option>
+      </select>
+      <input type="text" id="busca" placeholder="Digite um nome, prefixo (ex.: 2.100) ou código (ex.: 2.1005)" />
+      <button class="primary" id="btnAplicar">Buscar</button>
+      <button id="btnLimpar">Limpar</button>
+    </div>
+    <div class="status" id="status">Carregue a planilha para iniciar.</div>
+  </div>
+
+  <!-- LOGO CENTRALIZADA -->
+  <div class="logo-wrap"><img id="logo" alt="Logo" style="display:none;"></div>
+
+  <!-- FAMÍLIAS (chips) -->
+  <div class="familias" id="chipsFamilias" style="display:none;"></div>
+
+  <!-- TABELA -->
+  <div class="content">
+    <table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let produtos = [];
+let cols = { code:null, desc:null, price:null, family:null, sctr:null, scsn:null };
+let familiaSelecionada = "";
+
+const fmtBRL = new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL' });
+
+function findColName(obj, candidates){
+  const keys = Object.keys(obj || {});
+  const map = new Map(keys.map(k => [k.toLowerCase(), k]));
+  for(const c of candidates){ const k = map.get(c.toLowerCase()); if(k) return k; }
+  return null;
+}
+function inferirColunas(){
+  const a = produtos[0] || {};
+  cols.code   = findColName(a, ["Produto","Código","Codigo","cod","product","código"]);
+  cols.desc   = findColName(a, ["Descrição","Descricao","descrição","descricao","description","nome"]);
+  cols.price  = findColName(a, ["Preço Base","Preço Base Deriv.","Preço","Preco","preco","price","valor"]);
+  cols.family = findColName(a, ["Família","Familia","Categoria","categoria","Grupo","grupo"]);
+  cols.sctr   = findColName(a, ["sctr","SCTR","Sctr"]);
+  cols.scsn   = findColName(a, ["scsn","SCSN","Scsn"]);
+}
+function montarCabecalho(){
+  const thead = document.getElementById('thead');
+  thead.innerHTML = "";
+  const colsToShow = [
+    ["Código", cols.code],
+    ["Descrição", cols.desc],
+    ["Preço (R$)", cols.price],
+    ...(cols.family ? [["Família", cols.family]] : []),
+    ...(cols.sctr ? [["SCTR", cols.sctr]] : []),
+    ...(cols.scsn ? [["SCSN", cols.scsn]] : []),
+  ];
+  for(const [label,key] of colsToShow){
+    const th = document.createElement('th'); th.textContent = label; thead.appendChild(th);
+  }
+}
+function addCell(tr, v, key){
+  const td = document.createElement('td');
+  if(key === cols.price){
+    const num = Number(String(v).replace(/\./g,'').replace(',', '.')); // tenta lidar com 1.234,56
+    td.textContent = Number.isFinite(num) ? fmtBRL.format(num) : (v ?? "");
+  } else {
+    td.textContent = (v ?? "").toString();
+  }
+  tr.appendChild(td);
+}
+function renderTabela(lista){
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = "";
+  if(cols.code) lista = lista.slice().sort((a,b)=> String(a[cols.code]).localeCompare(String(b[cols.code]), 'pt-BR', {numeric:true}));
+  for(const p of lista){
+    const tr = document.createElement('tr');
+    addCell(tr, p[cols.code], cols.code);
+    addCell(tr, p[cols.desc], cols.desc);
+    addCell(tr, p[cols.price], cols.price);
+    if(cols.family) addCell(tr, p[cols.family], cols.family);
+    if(cols.sctr)   addCell(tr, p[cols.sctr], cols.sctr);
+    if(cols.scsn)   addCell(tr, p[cols.scsn], cols.scsn);
+    tbody.appendChild(tr);
+  }
+  document.getElementById('status').textContent = lista.length ? `${lista.length} item(ns)` : "Nenhum item encontrado";
+}
+function normalizeCode(v){
+  let s = String(v ?? "").trim();
+  if(/^\d+(\.\d+)?$/.test(s)){ s = s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, ''); }
+  return s;
+}
+function deduzFamilia(c){ const s = String(c||""); return s.includes(".") ? s.split(".").slice(0,-1).join(".") : s; }
+
+function aplicar(){
+  if(!produtos.length){ alert("Carregue a planilha primeiro."); return; }
+  const modo = document.getElementById('modo').value;
+  const v = document.getElementById('busca').value.trim();
+  let lista = produtos.slice();
+
+  if(modo === "nome" && v && cols.desc){
+    const alvo = v.toLowerCase();
+    lista = produtos.filter(p => String(p[cols.desc] ?? "").toLowerCase().includes(alvo));
+    familiaSelecionada = ""; realcarChips();
+  } else if(modo === "codigo" && v && cols.code){
+    const alvo = normalizeCode(v);
+    lista = produtos.filter(p => normalizeCode(p[cols.code]) === alvo);
+    familiaSelecionada = ""; realcarChips();
+  } else if(modo === "prefixo" && v && cols.code){
+    let prefixo = v;
+    const existeExato = produtos.some(p => normalizeCode(p[cols.code]) === normalizeCode(v));
+    if(existeExato) prefixo = deduzFamilia(v);
+    lista = produtos.filter(p => normalizeCode(p[cols.code]).startsWith(prefixo));
+    familiaSelecionada = ""; realcarChips();
+  } else if(familiaSelecionada && cols.family){
+    lista = produtos.filter(p => String(p[cols.family] ?? "").trim() === familiaSelecionada);
+  }
+  renderTabela(lista);
+}
+function limpar(){
+  document.getElementById('busca').value = "";
+  familiaSelecionada = ""; realcarChips();
+  renderTabela(produtos);
+}
+function renderChipsFamilias(){
+  const wrap = document.getElementById('chipsFamilias');
+  wrap.innerHTML = "";
+  if(!cols.family){ wrap.style.display = "none"; return; }
+  const familias = [...new Set(produtos.map(p => (p[cols.family] ?? "").toString().trim()).filter(Boolean))].sort();
+  if(!familias.length){ wrap.style.display = "none"; return; }
+  wrap.style.display = "flex";
+
+  const all = document.createElement('div');
+  all.className = "chip" + (familiaSelecionada===""?" active":"");
+  all.textContent = "Todas";
+  all.onclick = ()=>{ familiaSelecionada=""; aplicar(); realcarChips(); };
+  wrap.appendChild(all);
+
+  familias.forEach(f=>{
+    const c = document.createElement('div');
+    c.className = "chip"; c.textContent = f; c.dataset.f = f;
+    c.onclick = ()=>{ familiaSelecionada = f; document.getElementById('busca').value=""; aplicar(); realcarChips(); };
+    wrap.appendChild(c);
+  });
+}
+function realcarChips(){
+  const chips = document.querySelectorAll('.chip');
+  chips.forEach(ch=>{
+    if(ch.dataset.f === familiaSelecionada) ch.classList.add('active');
+    else if(!ch.dataset.f && familiaSelecionada==="") ch.classList.add('active');
+    else ch.classList.remove('active');
+  });
+}
+
+// Upload planilha
+document.getElementById('upload').addEventListener('change', (e)=>{
+  const file = e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+    const sheet = wb.Sheets["Planilha1"] || wb.Sheets[wb.SheetNames[0]];
+    if(!sheet){ alert("Não foi possível ler a planilha."); return; }
+    produtos = XLSX.utils.sheet_to_json(sheet);
+    inferirColunas();
+    montarCabecalho();
+    renderChipsFamilias();
+    familiaSelecionada = "";
+    document.getElementById('busca').value = "";
+    renderTabela(produtos);
+    document.getElementById('status').textContent = "Planilha carregada. Busque por Nome, Família (prefixo) ou Código exato; ou clique nos chips.";
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+// Upload logo
+document.getElementById('uploadLogo').addEventListener('change', (e)=>{
+  const file = e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    const img = document.getElementById('logo');
+    img.src = ev.target.result;
+    img.style.display = "block";
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('btnAplicar').onclick = aplicar;
+document.getElementById('btnLimpar').onclick = limpar;
+document.getElementById('busca').addEventListener('keydown', e => { if(e.key==="Enter") aplicar(); });
+</script>
+</body>
+</html>
